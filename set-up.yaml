@@ -10,7 +10,7 @@
           labels:               #
             env: lab            #
     prometheus_scrape_configs:
-      - job_name: "prometheus"    # Custom scrape job, here using static_config
+      - job_name: "prometheus"    
         metrics_path: "/metrics"
         static_configs:
           - targets:
