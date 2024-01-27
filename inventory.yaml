@@ -1,7 +1,7 @@
 servers:
   hosts:
-    vm2.lab:
+    vm1.lab:
 agents:
   hosts:
-    vm3.lab:
-    vm4.lab:
+    vm12.lab:
+    vm13.lab:
