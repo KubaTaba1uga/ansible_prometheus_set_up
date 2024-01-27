@@ -1,7 +1,7 @@
 servers:
   hosts:
-    vm1.lab:
+    prometheus.lab:
 agents:
   hosts:
-    vm12.lab:
-    vm13.lab:
+    dev.lab:
+

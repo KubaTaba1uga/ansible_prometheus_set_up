@@ -1,6 +1,5 @@
 ---
 - name: Configure agents
-  # delegate_to: "{{ instance }}"
   block:
     - name: Create the node_exporter group
       ansible.builtin.group:
@@ -54,7 +53,7 @@
           no_log: true
 
         - set_fact:
-            private_key: "{{ _private_key.content }}"
+            private_key: "{{ _private_key.content | b64decode }}"
           when: _private_key is not skipped
           no_log: true
           
@@ -69,7 +68,6 @@
               no_log: true
               when: _private_key is skipped
 
-
             - set_fact:
                    private_key: "{{ _private_key.privatekey }}"
               when: _private_key is changed
@@ -77,7 +75,7 @@
               
             - name: Create certificate signing request (CSR) for new certificate
               community.crypto.openssl_csr_pipe:
-                privatekey_content: "{{ private_key | b64decode }}"
+                privatekey_content: "{{ private_key }}"
                 subject_alt_name:
                   - "DNS:{{ inventory_hostname }}"
                   - "DNS:{{ inventory_hostname }}"
