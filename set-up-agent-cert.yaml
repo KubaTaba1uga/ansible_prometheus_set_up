@@ -56,9 +56,8 @@
         - set_fact:
             private_key: "{{ _private_key.content }}"
           when: _private_key is not skipped
-
-        - debug: var=_private_key
-
+          no_log: true
+          
         - name: Generate key and cert
           delegate_to: "{{ server_name }}"
           block:
@@ -67,31 +66,33 @@
                 passphrase: ""
                 cipher: auto
               register: _private_key
-              # no_log: true
-              when: _private_key is skipped                  
+              no_log: true
+              when: _private_key is skipped
+
 
             - set_fact:
                    private_key: "{{ _private_key.privatekey }}"
               when: _private_key is changed
-
+              no_log: true
+              
             - name: Create certificate signing request (CSR) for new certificate
               community.crypto.openssl_csr_pipe:
                 privatekey_content: "{{ private_key | b64decode }}"
                 subject_alt_name:
                   - "DNS:{{ inventory_hostname }}"
                   - "DNS:{{ inventory_hostname }}"
-              #no_log: true
+              no_log: true
               register: csr
 
             - name: Sign certificate with our CA
               community.crypto.x509_certificate_pipe:
-                content: "{{ (certificate.content | b64decode) if certificate_exists.stat.exists else omit }}"
+                content: "{{ ( certificate.content | b64decode ) if certificate_exists.stat.exists else omit }}"
                 csr_content: "{{ csr.csr }}"
                 provider: ownca
                 ownca_path: /etc/ssl/certs/ca-prometheus.pem
                 ownca_privatekey_path: /etc/ssl/private/ca-prometheus.key
               register: certificate
-              #no_log: true              
+              no_log: true              
 
         - name: Create private key for new certificate
           copy:
