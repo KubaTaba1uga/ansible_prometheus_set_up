@@ -1,6 +1,6 @@
 ---
 - name: Configure agents
-  delegate_to: "{{ instance }}"
+  # delegate_to: "{{ instance }}"
   block:
     - name: Create the node_exporter group
       ansible.builtin.group:
@@ -46,15 +46,15 @@
             - name: Generate an OpenSSL private key with the default values (4096 bits, RSA)
               community.crypto.openssl_privatekey_pipe:
               register: private_key
-              no_log: true  # make sure that private key data is not accidentally revealed in logs!
+              no_log: true
                         
             - name: Create certificate signing request (CSR) for new certificate
               community.crypto.openssl_csr_pipe:
                 privatekey_content: "{{ private_key.privatekey }}"
                 subject_alt_name:
-                  - "DNS:{{ instance }}"
-                  - "DNS:{{ instance }}"
-              no_log: true  # make sure that private key data is not accidentally revealed in logs!
+                  - "DNS:{{ inventory_hostname }}"
+                  - "DNS:{{ inventory_hostname }}"
+              no_log: true
               register: csr
 
             - name: Sign certificate with our CA
