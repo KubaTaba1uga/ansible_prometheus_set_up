@@ -1,121 +1,72 @@
 ---
-- hosts: all
+- hosts: servers
   become: true
 
   pre_tasks:
-   - name: Update and upgrade apt packages
-     apt:
-      upgrade: yes
-      update_cache: yes
-      cache_valid_time: 86400 #One day
+    - name: Configure servers
+      block:
+        - name: Update and upgrade apt packages
+          apt:
+           upgrade: yes
+           update_cache: yes
+           cache_valid_time: 86400 #One day
 
-   - name: install cryptography python package
-     ansible.builtin.package:
-       name: python3-cryptography
-       state: present
+        - name: install cryptography python package
+          ansible.builtin.package:
+            name: python3-cryptography
+            state: present
 
-   - name: Set up CA
-     block:
-       - name: Create private key
-         community.crypto.openssl_privatekey:
-           path: /etc/ssl/private/ca-prometheus.key
+        - name: Set up CA
+          block:
+            - name: Check whether private key exists
+              stat:
+                    path: /etc/ssl/private/ca-prometheus.key
+              register: ca_private_key_info
 
-       - name: Create certificate signing request (CSR) for CA certificate
-         community.crypto.openssl_csr_pipe:
-           privatekey_path: /etc/ssl/private/ca-prometheus.key
-           common_name: Prometheus CA
-           use_common_name_for_san: false  # since we do not specify SANs, don't use CN as a SAN
-           basic_constraints:
-             - 'CA:TRUE'
-           basic_constraints_critical: true
-           key_usage:
-             - keyCertSign
-           key_usage_critical: true
-           subject_alt_name:
-             - "DNS:{{ inventory_hostname }}"
-             - "DNS:www.{{ inventory_hostname }}"
-         register: ca_csr
+            - name: Create private key
+              community.crypto.openssl_privatekey:
+                path: /etc/ssl/private/ca-prometheus.key
+              when: not ca_private_key_info.stat.exists
+              no_log: true
 
-       - name: Create self-signed CA certificate from CSR
-         community.crypto.x509_certificate:
-           path: /etc/ssl/certs/ca-prometheus.pem
-           csr_content: "{{ ca_csr.csr }}"
-           privatekey_path: /etc/ssl/private/ca-prometheus.key
-           provider: selfsigned       
+            - name: Create certificate signing request (CSR) for CA certificate
+              community.crypto.openssl_csr_pipe:
+                privatekey_path: /etc/ssl/private/ca-prometheus.key
+                common_name: Prometheus CA
+                use_common_name_for_san: false  # since we do not specify SANs, don't use CN as a SAN
+                basic_constraints:
+                  - 'CA:TRUE'
+                basic_constraints_critical: true
+                key_usage:
+                  - keyCertSign
+                key_usage_critical: true
+                subject_alt_name:
+                  - "DNS:{{ inventory_hostname }}"
+                  - "DNS:www.{{ inventory_hostname }}"
+              register: ca_csr
+              no_log: true 
 
-   - name: Create the node_exporter group
-     ansible.builtin.group:
-       name: "{{ node_exporter_system_group }}"
-       state: present
-       system: true
-     when: node_exporter_system_group != "root"
-     
-   - name: Create the node_exporter user
-     ansible.builtin.user:
-       name: "{{ node_exporter_system_user }}"
-       groups: "{{ node_exporter_system_group }}"
-       append: true
-       shell: /usr/sbin/nologin
-       system: true
-       create_home: false
-       home: /
-     when: node_exporter_system_user != "root"
-     
-   - name: Create node_exporter cert dir
-     file:
-       path: "/etc/node_exporter"
-       state: directory
-       owner: "{{ node_exporter_system_group }}"
-       group: "{{ node_exporter_system_group }}"
-       
-   - name: Check /etc/node_exporter exists
-     stat:
-       path: "/etc/node_exporter"
-     register: node_exporter_dir
+            - name: Check whether CA cert exists
+              stat:
+                path: /etc/ssl/certs/ca-prometheus.pem
+              register: ca_cert_info
 
-   - name: Create CA signed cert
-     block:
-       - name: Create private key for new certificate
-         community.crypto.openssl_privatekey:
-           path: /etc/node_exporter/tls.key
-           owner: "{{ node_exporter_system_group }}"
-           group: "{{ node_exporter_system_group }}"
-
-       - name: Create certificate signing request (CSR) for new certificate
-         community.crypto.openssl_csr_pipe:
-           privatekey_path: /etc/node_exporter/tls.key
-           subject_alt_name:
-             - "DNS:{{ inventory_hostname }}"
-             - "DNS:{{ inventory_hostname }}"
-         register: csr
-
-       - name: Check whether certificate exists
-         stat:
-           path: /etc/node_exporter/tls.pem
-         register: certificate_exists
-
-       - name: Read existing certificate if exists
-         slurp:
-           src: /etc/node_exporter/tls.pem
-         when: certificate_exists.stat.exists
-         register: certificate
-
-       - name: Sign certificate with our CA
-         community.crypto.x509_certificate_pipe:
-           content: "{{ (certificate.content | b64decode) if certificate_exists.stat.exists else omit }}"
-           csr_content: "{{ csr.csr }}"
-           provider: ownca
-           ownca_path: /etc/ssl/certs/ca-prometheus.pem
-           ownca_privatekey_path: /etc/ssl/private/ca-prometheus.key
-         register: certificate
-
-       - name: Write certificate file
-         copy:
-           dest: /etc/node_exporter/tls.pem
-           content: "{{ certificate.certificate }}"
-           owner: "{{ node_exporter_system_group }}"
-           group: "{{ node_exporter_system_group }}"         
-         when: certificate is changed
+            - name: Create self-signed CA certificate from CSR
+              when: not ca_cert_info.stat.exists	    
+              community.crypto.x509_certificate:
+                path: /etc/ssl/certs/ca-prometheus.pem
+                csr_content: "{{ ca_csr.csr }}"
+                privatekey_path: /etc/ssl/private/ca-prometheus.key
+                provider: selfsigned    
+              no_log: true
+	      
+    - set_fact:
+        server_name: "{{ inventory_hostname }}"
+      
+    - include_tasks: "set-up-agent.yaml"
+      loop: "{{ groups['agents'] }}"
+      loop_control:
+        loop_var: instance
 
   roles:
     - prometheus.prometheus.prometheus
@@ -125,7 +76,7 @@
     prometheus_targets:
       node:  # This is a base file name. File is located in "{{ prometheus_config_dir }}/file_sd/<<BASENAME>>.yml"
         - targets:              #
-            - localhost:9100    # All this is a targets section in file_sd format
+            - "{{ inventory_hostname }}:9100"    # All this is a targets section in file_sd format
           labels:               #
             env: lab            #
     prometheus_scrape_configs:
@@ -134,16 +85,16 @@
         static_configs:
           - targets:
               - "localhost:9090"
-      - job_name: "example-node-file-servicediscovery"
+      - job_name: "node-file-servicediscovery"
         scheme: https
         file_sd_configs:
           - files:
               - "{{ prometheus_config_dir }}/file_sd/node.yml" # This line loads file created from prometheus_targets
 
     # prometheus.prometheus.node_exporter
-    node_exporter_web_listen_address: localhost:9100
+    node_exporter_web_listen_address: "{{ inventory_hostname }}:9100"
     node_exporter_tls_server_config:
-      cert_file: /etc/node_exporter/tls.cert
+      cert_file: /etc/node_exporter/tls.pem
       key_file: /etc/node_exporter/tls.key
 
       

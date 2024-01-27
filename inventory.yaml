@@ -1,0 +1,7 @@
+servers:
+  hosts:
+    vm2.lab:
+agents:
+  hosts:
+    vm3.lab:
+    vm4.lab:
