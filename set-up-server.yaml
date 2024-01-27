@@ -14,6 +14,35 @@
        name: python3-cryptography
        state: present
 
+   - name: Set up CA
+     block:
+       - name: Create private key
+         community.crypto.openssl_privatekey:
+           path: /etc/ssl/private/ca-prometheus.key
+
+       - name: Create certificate signing request (CSR) for CA certificate
+         community.crypto.openssl_csr_pipe:
+           privatekey_path: /etc/ssl/private/ca-prometheus.key
+           common_name: Prometheus CA
+           use_common_name_for_san: false  # since we do not specify SANs, don't use CN as a SAN
+           basic_constraints:
+             - 'CA:TRUE'
+           basic_constraints_critical: true
+           key_usage:
+             - keyCertSign
+           key_usage_critical: true
+           subject_alt_name:
+             - "DNS:{{ inventory_hostname }}"
+             - "DNS:www.{{ inventory_hostname }}"
+         register: ca_csr
+
+       - name: Create self-signed CA certificate from CSR
+         community.crypto.x509_certificate:
+           path: /etc/ssl/certs/ca-prometheus.pem
+           csr_content: "{{ ca_csr.csr }}"
+           privatekey_path: /etc/ssl/private/ca-prometheus.key
+           provider: selfsigned       
+
    - name: Create the node_exporter group
      ansible.builtin.group:
        name: "{{ node_exporter_system_group }}"
@@ -43,25 +72,50 @@
      stat:
        path: "/etc/node_exporter"
      register: node_exporter_dir
-     
-   - name: Create private key (RSA, 4096 bits)
-     community.crypto.openssl_privatekey:
-       path: /etc/node_exporter/tls.key
-       owner: "{{ node_exporter_system_group }}"
-       group: "{{ node_exporter_system_group }}"
-     when:
-       - node_exporter_dir.stat.exists
-       
-   - name: Create cert and key
-     community.crypto.x509_certificate:
-       path: /etc/node_exporter/tls.cert
-       privatekey_path: /etc/node_exporter/tls.key
-       provider: selfsigned
-       owner: "{{ node_exporter_system_group }}"
-       group: "{{ node_exporter_system_group }}"
-       
-     when:
-       - node_exporter_dir.stat.exists
+
+   - name: Create CA signed cert
+     block:
+       - name: Create private key for new certificate
+         community.crypto.openssl_privatekey:
+           path: /etc/node_exporter/tls.key
+           owner: "{{ node_exporter_system_group }}"
+           group: "{{ node_exporter_system_group }}"
+
+       - name: Create certificate signing request (CSR) for new certificate
+         community.crypto.openssl_csr_pipe:
+           privatekey_path: /etc/node_exporter/tls.key
+           subject_alt_name:
+             - "DNS:{{ inventory_hostname }}"
+             - "DNS:{{ inventory_hostname }}"
+         register: csr
+
+       - name: Check whether certificate exists
+         stat:
+           path: /etc/node_exporter/tls.pem
+         register: certificate_exists
+
+       - name: Read existing certificate if exists
+         slurp:
+           src: /etc/node_exporter/tls.pem
+         when: certificate_exists.stat.exists
+         register: certificate
+
+       - name: Sign certificate with our CA
+         community.crypto.x509_certificate_pipe:
+           content: "{{ (certificate.content | b64decode) if certificate_exists.stat.exists else omit }}"
+           csr_content: "{{ csr.csr }}"
+           provider: ownca
+           ownca_path: /etc/ssl/certs/ca-prometheus.pem
+           ownca_privatekey_path: /etc/ssl/private/ca-prometheus.key
+         register: certificate
+
+       - name: Write certificate file
+         copy:
+           dest: /etc/node_exporter/tls.pem
+           content: "{{ certificate.certificate }}"
+           owner: "{{ node_exporter_system_group }}"
+           group: "{{ node_exporter_system_group }}"         
+         when: certificate is changed
 
   roles:
     - prometheus.prometheus.prometheus
@@ -81,6 +135,7 @@
           - targets:
               - "localhost:9090"
       - job_name: "example-node-file-servicediscovery"
+        scheme: https
         file_sd_configs:
           - files:
               - "{{ prometheus_config_dir }}/file_sd/node.yml" # This line loads file created from prometheus_targets
@@ -90,6 +145,5 @@
     node_exporter_tls_server_config:
       cert_file: /etc/node_exporter/tls.cert
       key_file: /etc/node_exporter/tls.key
-    node_exporter_basic_auth_users:
-      randomuser: examplepassword
+
       
