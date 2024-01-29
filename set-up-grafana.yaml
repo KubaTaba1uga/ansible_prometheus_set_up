@@ -2,7 +2,7 @@
 - hosts: servers
   become: true
   roles:
-    - grafana
+    - grafana.grafana.grafana
 
   vars:
     grafana_datasources:
