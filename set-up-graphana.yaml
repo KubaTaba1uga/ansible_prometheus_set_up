@@ -1,5 +1,5 @@
 ---
-- hosts: all
+- hosts: servers
   become: true
   roles:
     - grafana
@@ -9,5 +9,5 @@
       - name: prometheus
         type: prometheus
         access: proxy
-        url: 'http://{{ prometheus_web_listen_address }}'
+        url: 'http://{{ inventory_hostname }}:9090'
         basicAuth: false  
